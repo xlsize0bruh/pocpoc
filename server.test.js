@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { createPocServer, SESSION_TTL_MS } = require("./server");
+const { createPocServer, COOKIE_MAX_AGE } = require("./server");
 
 async function fixture(t, options = {}) {
   let time = Date.UTC(2026, 9, 7);
@@ -84,7 +84,7 @@ test("login gates synthetic data with a reusable, stable session cookie", async 
   assert.equal(response.headers.get("location"), "/private");
   const setCookie = response.headers.get("set-cookie");
   assert.match(setCookie, /^safari_poc_session=[a-f0-9]{64};/);
-  assert.match(setCookie, /HttpOnly; SameSite=Lax; Max-Age=600/);
+  assert(setCookie.includes(`HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE}`));
   assert.doesNotMatch(setCookie, /Secure/);
   const headers = { Cookie: setCookie.split(";")[0] };
   const privatePage = await request("/private?test=locked-lan-001", { headers });
@@ -99,14 +99,16 @@ test("login gates synthetic data with a reusable, stable session cookie", async 
   assert.match(logs.join("\n"), /Auth: AUTHENTICATED demo/);
 });
 
-test("requests do not extend expiry and an expired copied cookie is rejected", async (t) => {
+test("local sessions remain valid after ten minutes and thirty days", async (t) => {
   const { login, request, advance } = await fixture(t);
   const response = await login();
   const headers = { Cookie: response.headers.get("set-cookie").split(";")[0] };
-  advance(SESSION_TTL_MS - 1);
+  advance(11 * 60 * 1000);
   assert.equal((await request("/api/private", { headers })).status, 200);
-  advance(1);
-  assert.equal((await request("/api/private", { headers })).status, 401);
+  advance(30 * 24 * 60 * 60 * 1000);
+  const account = await request("/api/private", { headers });
+  assert.equal(account.status, 200);
+  assert.equal((await account.json()).expiresAt, null);
 });
 
 test("logout requires its form token and invalidates the copied session", async (t) => {

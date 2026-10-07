@@ -1,7 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { createHandler, SESSION_COOKIE } = require("../lib/netlify-app");
-const { SESSION_TTL_MS } = require("../server");
+const { COOKIE_MAX_AGE } = require("../server");
 
 function fixture() {
   let time = Date.UTC(2026, 9, 7);
@@ -27,7 +27,7 @@ function fixture() {
   return { call, login, records, logs, callbacks, freshHandler, advance: (amount) => { time += amount; } };
 }
 
-test("Netlify callback executes only for a valid session, not guests or expired sessions", async () => {
+test("Netlify callback requires a session and remains available beyond ten minutes", async () => {
   const { login, call, callbacks, advance } = fixture();
   const target = "https://callback.example/unique?test=locked-001&marker=fake";
   const route = `/?url=${encodeURIComponent(target)}`;
@@ -41,9 +41,9 @@ test("Netlify callback executes only for a valid session, not guests or expired 
   assert.equal(ping.statusCode, 200);
   assert.match(ping.body, /This Poc by xlsize0bruh/);
   assert.deepEqual(callbacks, [{ url: target, username: "demo" }]);
-  advance(SESSION_TTL_MS);
-  assert.equal((await call(route, { headers })).statusCode, 401);
-  assert.deepEqual(callbacks, [{ url: target, username: "demo" }]);
+  advance(30 * 24 * 60 * 60 * 1000);
+  assert.equal((await call(route, { headers })).statusCode, 200);
+  assert.equal(callbacks.length, 2);
 });
 
 test("Netlify callback reports destination failure instead of success", async () => {
@@ -74,7 +74,8 @@ test("Netlify login survives separate handler instances and uses an HTTPS-only c
   const result = await login({ fields: { next: "/private?test=private-lock-001" } });
   assert.equal(result.statusCode, 303);
   assert.equal(result.headers.Location, "/private?test=private-lock-001");
-  assert.match(result.headers["Set-Cookie"], /^__Host-safari_poc_session=[a-f0-9]{64}; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=600$/);
+  assert.match(result.headers["Set-Cookie"], /^__Host-safari_poc_session=[a-f0-9]{64}; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=31536000$/);
+  assert.equal(COOKIE_MAX_AGE, 31536000);
   const cookie = result.headers["Set-Cookie"].split(";")[0];
   assert.notEqual([...records.keys()][0], cookie.split("=")[1]);
   const result2 = await call("/private?test=private-lock-001", { headers: { cookie } });
@@ -87,17 +88,19 @@ test("Netlify login survives separate handler instances and uses an HTTPS-only c
   assert.doesNotMatch(logs.join("\n"), /demo1234/);
 });
 
-test("Netlify session expires without renewal", async () => {
+test("Netlify sessions have no server timeout, including records from the old expiring format", async () => {
   const { login, call, advance, records } = fixture();
   const result = await login();
   const headers = { cookie: result.headers["Set-Cookie"].split(";")[0] };
-  advance(SESSION_TTL_MS - 1);
+  advance(11 * 60 * 1000);
   assert.equal((await call("/api/private", { headers })).statusCode, 200);
-  advance(1);
-  const expired = await call("/api/private", { headers });
-  assert.equal(expired.statusCode, 401);
-  assert.match(expired.headers["Set-Cookie"], /Max-Age=0/);
-  assert.equal(records.size, 0);
+  [...records.values()][0].expiresAt = 1;
+  advance(30 * 24 * 60 * 60 * 1000);
+  const account = await call("/api/private", { headers });
+  assert.equal(account.statusCode, 200);
+  assert.equal(account.headers["Set-Cookie"], undefined);
+  assert.equal(JSON.parse(account.body).expiresAt, null);
+  assert.equal(records.size, 1);
 });
 
 test("Netlify logout deletes the session for all handler instances", async () => {

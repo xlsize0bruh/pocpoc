@@ -6,7 +6,7 @@ const { createCallbackSender, pocMessage } = require("./lib/callback");
 const { JsonSessions } = require("./lib/json-sessions");
 
 const SESSION_COOKIE = "safari_poc_session";
-const SESSION_TTL_MS = 10 * 60 * 1000;
+const COOKIE_MAX_AGE = 365 * 24 * 60 * 60;
 const DEMO_USER = "demo";
 const DEMO_PASSWORD = "demo1234";
 
@@ -93,13 +93,9 @@ function createPocServer({ now = Date.now, log = console.log, sendCallback = cre
       const url = new URL(req.url, "http://poc.invalid");
       const time = now();
       const token = cookieValue(req.headers.cookie, SESSION_COOKIE);
-      const previous = sessions.get(token);
-      const session = previous && previous.expiresAt > time ? previous : null;
-      for (const [key, value] of sessions) {
-        if (value.expiresAt <= time) sessions.delete(key);
-      }
+      const session = sessions.get(token) || null;
       const username = session ? session.username || DEMO_USER : "";
-      const authStatus = session ? `AUTHENTICATED ${username}` : previous ? "EXPIRED" : token ? "INVALID SESSION" : "NOT AUTHENTICATED";
+      const authStatus = session ? `AUTHENTICATED ${username}` : token ? "INVALID SESSION" : "NOT AUTHENTICATED";
       log(`[${new Date(time).toISOString()}] ${req.method} ${req.url}\nHost: ${req.headers.host || ""}\nCookie: ${token ? `${SESSION_COOKIE}=${token}` : "(none)"}\nAuth: ${authStatus}\n`);
       if (token && !session) clearCookie();
 
@@ -142,13 +138,13 @@ function createPocServer({ now = Date.now, log = console.log, sendCallback = cre
         if (session) sessions.delete(token);
         sessions.set(freshToken, {
           username: form.get("username").trim(),
-          expiresAt: time + SESSION_TTL_MS,
+          expiresAt: null,
           csrf: crypto.randomBytes(24).toString("hex"),
           privateMarker: `FAKE-PRIVATE-${crypto.randomBytes(12).toString("hex")}`,
         });
         // This local HTTP demo deliberately omits Secure so its cookie travels over HTTP.
-        res.setHeader("Set-Cookie", `${SESSION_COOKIE}=${freshToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}`);
-        log(`[${new Date(time).toISOString()}] LOGIN SUCCESS ${form.get("username").trim()} (10-minute session)`);
+        res.setHeader("Set-Cookie", `${SESSION_COOKIE}=${freshToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE}`);
+        log(`[${new Date(time).toISOString()}] LOGIN SUCCESS ${form.get("username").trim()}`);
         redirect(next);
         return;
       }
@@ -165,7 +161,7 @@ function createPocServer({ now = Date.now, log = console.log, sendCallback = cre
       }
       if (url.pathname === "/login") {
         if (session) redirect("/private");
-        else loginPage(previous ? "Session expired. Sign in again." : "");
+        else loginPage();
         return;
       }
       if (url.pathname === "/") {
@@ -191,7 +187,7 @@ function createPocServer({ now = Date.now, log = console.log, sendCallback = cre
       if (url.pathname === "/api/private") {
         send(session ? 200 : 401, JSON.stringify(session ? {
           account: username, privateMarker: session.privateMarker,
-          expiresAt: new Date(session.expiresAt).toISOString(), synthetic: true,
+          expiresAt: null, synthetic: true,
         } : { error: "Authentication required" }), "application/json; charset=utf-8");
         return;
       }
@@ -202,14 +198,14 @@ function createPocServer({ now = Date.now, log = console.log, sendCallback = cre
       }
       if (["/private", "/clear", "/logout"].includes(url.pathname)) {
         if (!session) {
-          loginPage(previous ? "Session expired. Sign in again." : "Sign in to access this page.", `/private${url.search}`, 401);
+          loginPage("Sign in to access this page.", `/private${url.search}`, 401);
           return;
         }
         send(200, page("Private account", `
           <h1>Private account</h1><p class="status">Signed in as ${escapeHtml(username)}</p>
           <dl><div><dt>Account</dt><dd>${escapeHtml(username)}</dd></div>
           <div><dt>Private marker</dt><dd><code>${escapeHtml(session.privateMarker)}</code></dd></div>
-          <div><dt>Session expires</dt><dd>${escapeHtml(new Date(session.expiresAt).toISOString())}</dd></div>
+          <div><dt>Session timeout</dt><dd>None</dd></div>
           <div><dt>Session ID</dt><dd><code>${escapeHtml(token.slice(0, 12))}...</code></dd></div></dl>
           <h2>Current request</h2><pre>${escapeHtml(`${req.method} ${req.url}\nHost: ${req.headers.host || ""}\nAuth: AUTHENTICATED ${username}`)}</pre>
           <h2>Callback</h2><form method="get" action="/">
@@ -236,9 +232,9 @@ if (require.main === module) {
     console.log(`Safari Session PoC running at http://localhost:${port}`);
     console.log(`iPhone URL: http://<your-computer-ip>:${port}/`);
     console.log("Demo sign-in accepts any non-empty username and password; passwords are not saved.");
-    console.log("Sessions are saved in .data/sessions.json and expire after 10 minutes.");
+    console.log("Sessions are saved in .data/sessions.json with no server-side timeout; sign out revokes them.");
     console.log("HTTP demo only. Use synthetic data; session cookies are intentionally logged.");
   });
 }
 
-module.exports = { createPocServer, SESSION_COOKIE, SESSION_TTL_MS, DEMO_USER, DEMO_PASSWORD, page, escapeHtml, cookieValue };
+module.exports = { createPocServer, SESSION_COOKIE, COOKIE_MAX_AGE, DEMO_USER, DEMO_PASSWORD, page, escapeHtml, cookieValue };

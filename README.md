@@ -34,8 +34,8 @@ Username: alice
 ```
 
 Only the fixed PoC text and signed-in test username are forwarded, not cookies,
-passwords or private markers. Logged-out, forged,
-expired and revoked sessions cannot send callbacks. Signing in does not automatically
+passwords or private markers. Logged-out, forged
+and revoked sessions cannot send callbacks. Signing in does not automatically
 replay a blocked callback. Use a new test ID for each attempt and compare callback timing
 with a screen recording showing that Safari authentication did not succeed.
 
@@ -50,11 +50,11 @@ Open https://safari-poc.netlify.app/?test=private-lock-001 and sign in with any 
 The function issues this cookie only after successful login:
 
 ```http
-Set-Cookie: __Host-safari_poc_session=<random-token>; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=600
+Set-Cookie: __Host-safari_poc_session=<random-token>; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=31536000
 Cache-Control: no-store, no-cache, must-revalidate, max-age=0
 ```
 
-Sessions use Netlify Blobs with strong consistency so they survive separate function instances. No manually configured secret or API token is required in the hosted function. Sessions expire 10 minutes after login; reads do not extend expiry. Sign out deletes the session. Expired records are deleted when accessed.
+Sessions use Netlify Blobs with strong consistency so they survive separate function instances. No manually configured secret or API token is required in the hosted function. There is no server-side session timeout. Sign out deletes the session. The browser cookie has a one-year persistence lifetime; clearing site data, browser privacy policies or cookie expiry can still require another sign-in. Sign in again after upgrading from the old ten-minute version to replace its short-lived cookie.
 
 1. Sign in while Safari is unlocked and leave `/private?test=private-lock-001` selected.
 2. Background Safari and let the relevant lock engage. Test app lock and Private Browsing lock separately.
@@ -73,9 +73,9 @@ The local `server.js` provides a real server-side demo login:
 
 - Username and password: any non-empty made-up values.
 - Cookie: `safari_poc_session` (random, HttpOnly, SameSite=Lax)
-- Session lifetime: 10 minutes from login; requests do not renew it.
+- No server-side session timeout. The browser cookie persists for up to one year.
 - The command-line server saves sessions in `.data/sessions.json`; restarting preserves
-  unexpired sessions. This directory is ignored by Git and is never served over HTTP.
+  sessions. This directory is ignored by Git and is never served over HTTP.
 - The username is saved in the JSON session; the password is not stored.
 - `/private` and `/api/private` require a valid session and return only synthetic data.
 - Sign out invalidates the session, including copied cookies.
