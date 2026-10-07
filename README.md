@@ -1,13 +1,15 @@
 # Safari Session PoC
 
-Demo login for checking whether locked Safari restores a selected tab and sends an authenticated request before app-lock or Private Browsing authentication. Both versions use public demo credentials and synthetic data only.
+Demo sign-in for checking whether locked Safari sends a session-authenticated request before app-lock or Private Browsing authentication. Both versions accept arbitrary test credentials and use synthetic data only. This is a session demonstration, not real account authentication.
 
 ## Netlify HTTPS login
 
 ### Authenticated callback PoC
 
-The demo account is stored in server-only `data/demo-user.json` with a salted password hash.
-Credentials remain `demo` / `demo1234`. Only synthetic data belongs in this demo.
+Any non-empty test username and password can sign in. Usernames are trimmed and limited
+to 80 characters; passwords are limited to 256 characters. Use made-up credentials.
+The username is stored in the server-side JSON session, not taken from callback query
+parameters. Passwords are discarded, never stored or sent in callbacks.
 
 Supply your own callback URL at request time using `/?url=...`; no fixed URL is required.
 Optionally restrict destinations with `CALLBACK_ALLOWED_HOSTS`, a comma-separated list
@@ -24,13 +26,15 @@ https://safari-poc.netlify.app/?url=https%3A%2F%2Fyour-unique-oast-host.example%
 ```
 
 URL-encode the entire callback URL, including its query parameters. The server validates
-the session before making one HTTPS POST to the receiver. The body is exactly:
+the session before making one HTTPS POST to the receiver. For username `alice`, the body is:
 
 ```text
 This Poc by xlsize0bruh
+Username: alice
 ```
 
-No cookie, password, private marker or account data is forwarded. Logged-out, forged,
+Only the fixed PoC text and signed-in test username are forwarded, not cookies,
+passwords or private markers. Logged-out, forged,
 expired and revoked sessions cannot send callbacks. Signing in does not automatically
 replay a blocked callback. Use a new test ID for each attempt and compare callback timing
 with a screen recording showing that Safari authentication did not succeed.
@@ -41,7 +45,7 @@ The hosted guest rejection, login, callback validation and logout flows have bee
 verified. Actual delivery to your chosen endpoint should be checked with your own
 test receiver; no third-party callback was sent during implementation verification.
 
-Open https://safari-poc.netlify.app/?test=private-lock-001 and sign in with username `demo` and password `demo1234`. The resulting `/private` page requires a valid server-side session, as does `/api/private`.
+Open https://safari-poc.netlify.app/?test=private-lock-001 and sign in with any made-up username and password. The resulting `/private` page requires a valid server-side session, as does `/api/private`.
 
 The function issues this cookie only after successful login:
 
@@ -67,13 +71,12 @@ Netlify installs the pinned dependency, checks the function and bundles it with 
 
 The local `server.js` provides a real server-side demo login:
 
-- Username: `demo`
-- Password: `demo1234`
+- Username and password: any non-empty made-up values.
 - Cookie: `safari_poc_session` (random, HttpOnly, SameSite=Lax)
 - Session lifetime: 10 minutes from login; requests do not renew it.
 - The command-line server saves sessions in `.data/sessions.json`; restarting preserves
   unexpired sessions. This directory is ignored by Git and is never served over HTTP.
-- Credentials are checked against the hashed account record in `data/demo-user.json`.
+- The username is saved in the JSON session; the password is not stored.
 - `/private` and `/api/private` require a valid session and return only synthetic data.
 - Sign out invalidates the session, including copied cookies.
 
@@ -96,10 +99,10 @@ Open `http://<your-computer-wifi-ip>:8080/?test=locked-lan-001` on your iPhone, 
 3. Start a fresh packet capture on the computer's Wi-Fi interface, filtered with `tcp.port == 8080`.
 4. Wait 30 seconds without opening Safari to establish a quiet baseline.
 5. Tap Safari without passing Face ID, then check for fresh `GET /private` traffic.
-6. The server prints `Auth: AUTHENTICATED demo` only if that request contains a valid session cookie. Verify the timestamp against the still-visible lock prompt.
+6. The server prints `Auth: AUTHENTICATED <username>` only if that request contains a valid session cookie. Verify the timestamp against the still-visible lock prompt.
 7. A fresh HTTP 200 response containing `FAKE-PRIVATE-...` establishes that synthetic private content was returned. It does not establish UI display or JavaScript execution.
 
-The local demo deliberately omits the cookie's Secure attribute to permit HTTP transmission. Use fake data and these public demo credentials only; this is not production authentication. Login passwords are not printed, but demo session cookies and URLs are deliberately logged. Log retention and session expiry are different: logs are not automatically deleted after 10 minutes.
+The local demo deliberately omits the cookie's Secure attribute to permit HTTP transmission. Use fake data and made-up credentials only; this is not production authentication. Login passwords are not printed, but demo session cookies and URLs are deliberately logged. Log retention and session expiry are different: logs are not automatically deleted after 10 minutes.
 
 To check the demo cookie's authority from a separate client while it is valid, send that demo cookie to `/api/private`. Requests without it return HTTP 401. This demonstrates the behavior of this custom app, not account compromise on another website.
 
@@ -113,5 +116,4 @@ The Netlify HTTPS login uses a separate Secure cookie and persistent session sto
 npm install
 npm test
 ```
-
 

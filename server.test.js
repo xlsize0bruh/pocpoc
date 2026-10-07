@@ -13,9 +13,9 @@ async function fixture(t, options = {}) {
   }));
   const base = `http://127.0.0.1:${server.address().port}`;
   const request = (path, options = {}) => fetch(`${base}${path}`, { redirect: "manual", ...options });
-  const login = (password = "demo1234", next = "/private") => request("/login", {
+  const login = (password = "demo1234", next = "/private", username = "demo") => request("/login", {
     method: "POST", headers: { Origin: base },
-    body: new URLSearchParams({ username: "demo", password, next }),
+    body: new URLSearchParams({ username, password, next }),
   });
   return { request, login, logs, advance: (amount) => { time += amount; } };
 }
@@ -51,12 +51,30 @@ test("local callback is login-gated and logout revokes callback access", async (
   assert.deepEqual(callbacks, [target]);
 });
 
-test("incorrect credentials do not create a session or log the password", async (t) => {
+test("blank credentials do not create a session", async (t) => {
   const { login, logs } = await fixture(t);
-  const response = await login("wrong-password");
+  const response = await login("");
   assert.equal(response.status, 401);
   assert.equal(response.headers.get("set-cookie"), null);
-  assert.doesNotMatch(logs.join("\n"), /wrong-password/);
+  assert.doesNotMatch(logs.join("\n"), /demo1234/);
+});
+
+test("local arbitrary sign-ins use each session's username in callbacks", async (t) => {
+  const callbacks = [];
+  const { login, request, logs } = await fixture(t, { sendCallback: async (url, username) => callbacks.push({ url, username }) });
+  for (const username of ["alice", "bob <test>"]) {
+    const signedIn = await login("any-dummy-password", "/private", username);
+    assert.equal(signedIn.status, 303);
+    const headers = { Cookie: signedIn.headers.get("set-cookie").split(";")[0] };
+    assert.equal((await (await request("/api/private", { headers })).json()).account, username);
+    const ping = await request("/?url=https%3A%2F%2Fcallback.example%2F&username=spoofed", { headers });
+    assert.equal(ping.status, 200);
+    const html = await ping.text();
+    assert.match(html, /Username:/);
+    assert.doesNotMatch(html, /bob <test>/);
+    assert.deepEqual(callbacks.at(-1), { url: "https://callback.example/", username });
+  }
+  assert.doesNotMatch(logs.join("\n"), /any-dummy-password/);
 });
 
 test("login gates synthetic data with a reusable, stable session cookie", async (t) => {

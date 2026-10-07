@@ -14,7 +14,7 @@ function fixture() {
     async delete(key) { records.delete(key); },
   };
   const freshHandler = () => createHandler({ getStoreForEvent: () => store, now: () => time, log: (value) => logs.push(value),
-    sendCallback: async (url) => { callbacks.push(url); return { status: 200 }; } });
+    sendCallback: async (url, username) => { callbacks.push({ url, username }); return { status: 200 }; } });
   const call = (path, options = {}, handler = freshHandler()) => handler({
     httpMethod: options.method || "GET", rawUrl: `https://safari-poc.netlify.app${path}`,
     headers: { host: "safari-poc.netlify.app", ...options.headers },
@@ -40,10 +40,10 @@ test("Netlify callback executes only for a valid session, not guests or expired 
   const ping = await call(route, { headers });
   assert.equal(ping.statusCode, 200);
   assert.match(ping.body, /This Poc by xlsize0bruh/);
-  assert.deepEqual(callbacks, [target]);
+  assert.deepEqual(callbacks, [{ url: target, username: "demo" }]);
   advance(SESSION_TTL_MS);
   assert.equal((await call(route, { headers })).statusCode, 401);
-  assert.deepEqual(callbacks, [target]);
+  assert.deepEqual(callbacks, [{ url: target, username: "demo" }]);
 });
 
 test("Netlify callback reports destination failure instead of success", async () => {
@@ -115,9 +115,9 @@ test("Netlify logout deletes the session for all handler instances", async () =>
   assert.equal((await call("/api/private", { headers })).statusCode, 401);
 });
 
-test("Netlify rejects bad credentials, cross-site login, oversized forms and external redirects", async () => {
+test("Netlify rejects blank credentials, cross-site login, oversized forms and external redirects", async () => {
   const { login, call } = fixture();
-  const bad = await login({ fields: { password: "wrong" } });
+  const bad = await login({ fields: { password: "" } });
   assert.equal(bad.statusCode, 401);
   assert.equal(bad.headers["Set-Cookie"], undefined);
   assert.equal((await login({ headers: { origin: "https://example.com" } })).statusCode, 403);
@@ -127,6 +127,25 @@ test("Netlify rejects bad credentials, cross-site login, oversized forms and ext
     method: "POST", body: Buffer.from("username=demo&password=demo1234").toString("base64"), base64: true,
   });
   assert.equal(base64.statusCode, 303);
+});
+
+test("Netlify saves arbitrary usernames in JSON and never takes callback identity from the query", async () => {
+  const { login, call, callbacks, records, logs } = fixture();
+  for (const username of ["alice", "bob <test>"]) {
+    const result = await login({ fields: { username, password: "random-dummy-password" } });
+    assert.equal(result.statusCode, 303);
+    const headers = { cookie: result.headers["Set-Cookie"].split(";")[0] };
+    const ping = await call("/?url=https%3A%2F%2Fcallback.example%2F&username=spoofed", { headers });
+    assert.equal(ping.statusCode, 200);
+    assert.doesNotMatch(ping.body, /bob <test>/);
+    assert.match(ping.body, username === "alice" ? /Username: alice/ : /Username: bob &lt;test&gt;/);
+    assert.deepEqual(callbacks.at(-1), { url: "https://callback.example/", username });
+    const api = await call("/api/private", { headers });
+    assert.equal(JSON.parse(api.body).account, username);
+  }
+  assert.deepEqual([...records.values()].map((record) => record.username), ["alice", "bob <test>"]);
+  assert.doesNotMatch(JSON.stringify([...records.values()]), /random-dummy-password|password/i);
+  assert.doesNotMatch(logs.join("\n"), /random-dummy-password/);
 });
 
 test("Netlify storage failure refuses access instead of falling back to an insecure cookie", async () => {

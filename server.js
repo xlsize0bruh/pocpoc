@@ -2,7 +2,7 @@ const http = require("node:http");
 const crypto = require("node:crypto");
 const path = require("node:path");
 const { validLogin } = require("./lib/demo-login");
-const { createCallbackSender, MESSAGE } = require("./lib/callback");
+const { createCallbackSender, pocMessage } = require("./lib/callback");
 const { JsonSessions } = require("./lib/json-sessions");
 
 const SESSION_COOKIE = "safari_poc_session";
@@ -98,7 +98,8 @@ function createPocServer({ now = Date.now, log = console.log, sendCallback = cre
       for (const [key, value] of sessions) {
         if (value.expiresAt <= time) sessions.delete(key);
       }
-      const authStatus = session ? "AUTHENTICATED demo" : previous ? "EXPIRED" : token ? "INVALID SESSION" : "NOT AUTHENTICATED";
+      const username = session ? session.username || DEMO_USER : "";
+      const authStatus = session ? `AUTHENTICATED ${username}` : previous ? "EXPIRED" : token ? "INVALID SESSION" : "NOT AUTHENTICATED";
       log(`[${new Date(time).toISOString()}] ${req.method} ${req.url}\nHost: ${req.headers.host || ""}\nCookie: ${token ? `${SESSION_COOKIE}=${token}` : "(none)"}\nAuth: ${authStatus}\n`);
       if (token && !session) clearCookie();
 
@@ -108,12 +109,11 @@ function createPocServer({ now = Date.now, log = console.log, sendCallback = cre
         <form method="post" action="/login">
           <input type="hidden" name="next" value="${escapeHtml(next)}">
           <label for="username">Username</label>
-          <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+          <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="80" required>
           <label for="password">Password</label>
-          <input id="password" name="password" type="password" autocomplete="current-password" required>
+          <input id="password" name="password" type="password" autocomplete="current-password" maxlength="256" required>
           <button type="submit">Sign in</button>
-        </form>
-        <p class="credentials">Demo credentials: <code>demo</code> / <code>demo1234</code></p>`));
+        </form>`));
 
       if (req.method === "POST" && ["/login", "/logout"].includes(url.pathname)) {
         const origin = req.headers.origin;
@@ -135,19 +135,20 @@ function createPocServer({ now = Date.now, log = console.log, sendCallback = cre
         const candidate = form.get("next") || "/private";
         const next = candidate === "/private" || candidate.startsWith("/private?") ? candidate : "/private";
         if (!validLogin(form.get("username"), form.get("password"))) {
-          loginPage("Incorrect username or password.", next, 401);
+          loginPage("Enter a username (up to 80 characters) and password (up to 256 characters).", next, 401);
           return;
         }
         const freshToken = crypto.randomBytes(32).toString("hex");
         if (session) sessions.delete(token);
         sessions.set(freshToken, {
+          username: form.get("username").trim(),
           expiresAt: time + SESSION_TTL_MS,
           csrf: crypto.randomBytes(24).toString("hex"),
           privateMarker: `FAKE-PRIVATE-${crypto.randomBytes(12).toString("hex")}`,
         });
         // This local HTTP demo deliberately omits Secure so its cookie travels over HTTP.
         res.setHeader("Set-Cookie", `${SESSION_COOKIE}=${freshToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}`);
-        log(`[${new Date(time).toISOString()}] LOGIN SUCCESS demo (10-minute session)`);
+        log(`[${new Date(time).toISOString()}] LOGIN SUCCESS ${form.get("username").trim()} (10-minute session)`);
         redirect(next);
         return;
       }
@@ -174,9 +175,9 @@ function createPocServer({ now = Date.now, log = console.log, sendCallback = cre
             return;
           }
           try {
-            await sendCallback(url.searchParams.get("url"));
-            log(`[${new Date(now()).toISOString()}] CALLBACK SUCCESS demo`);
-            send(200, page("Ping sent", `<h1>Ping sent</h1><pre>${escapeHtml(MESSAGE)}</pre><a href="/private">Account</a>`));
+            await sendCallback(url.searchParams.get("url"), username);
+            log(`[${new Date(now()).toISOString()}] CALLBACK SUCCESS ${username}`);
+            send(200, page("Ping sent", `<h1>Ping sent</h1><pre>${escapeHtml(pocMessage(username))}</pre><a href="/private">Account</a>`));
           } catch (error) {
             send(error.status || 502, page("Ping failed", `<h1>Ping failed</h1><p role="alert">${escapeHtml(error.message)}</p><a href="/private">Account</a>`));
           }
@@ -189,7 +190,7 @@ function createPocServer({ now = Date.now, log = console.log, sendCallback = cre
       }
       if (url.pathname === "/api/private") {
         send(session ? 200 : 401, JSON.stringify(session ? {
-          account: DEMO_USER, privateMarker: session.privateMarker,
+          account: username, privateMarker: session.privateMarker,
           expiresAt: new Date(session.expiresAt).toISOString(), synthetic: true,
         } : { error: "Authentication required" }), "application/json; charset=utf-8");
         return;
@@ -205,12 +206,12 @@ function createPocServer({ now = Date.now, log = console.log, sendCallback = cre
           return;
         }
         send(200, page("Private account", `
-          <h1>Private account</h1><p class="status">Signed in as demo</p>
-          <dl><div><dt>Account</dt><dd>Demo user</dd></div>
+          <h1>Private account</h1><p class="status">Signed in as ${escapeHtml(username)}</p>
+          <dl><div><dt>Account</dt><dd>${escapeHtml(username)}</dd></div>
           <div><dt>Private marker</dt><dd><code>${escapeHtml(session.privateMarker)}</code></dd></div>
           <div><dt>Session expires</dt><dd>${escapeHtml(new Date(session.expiresAt).toISOString())}</dd></div>
           <div><dt>Session ID</dt><dd><code>${escapeHtml(token.slice(0, 12))}...</code></dd></div></dl>
-          <h2>Current request</h2><pre>${escapeHtml(`${req.method} ${req.url}\nHost: ${req.headers.host || ""}\nAuth: AUTHENTICATED demo`)}</pre>
+          <h2>Current request</h2><pre>${escapeHtml(`${req.method} ${req.url}\nHost: ${req.headers.host || ""}\nAuth: AUTHENTICATED ${username}`)}</pre>
           <h2>Callback</h2><form method="get" action="/">
           <label for="callback">Callback URL</label><input id="callback" type="url" name="url" placeholder="https://your-endpoint.example/" required>
           <button type="submit">Send ping</button></form>
@@ -234,7 +235,7 @@ if (require.main === module) {
   createPocServer({ sessionFile: path.join(__dirname, ".data", "sessions.json") }).listen(port, "0.0.0.0", () => {
     console.log(`Safari Session PoC running at http://localhost:${port}`);
     console.log(`iPhone URL: http://<your-computer-ip>:${port}/`);
-    console.log(`Demo login: ${DEMO_USER} / ${DEMO_PASSWORD}`);
+    console.log("Demo sign-in accepts any non-empty username and password; passwords are not saved.");
     console.log("Sessions are saved in .data/sessions.json and expire after 10 minutes.");
     console.log("HTTP demo only. Use synthetic data; session cookies are intentionally logged.");
   });

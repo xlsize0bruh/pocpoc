@@ -9,10 +9,16 @@ const { createCallbackSender, MESSAGE } = require("../lib/callback");
 const { JsonSessions } = require("../lib/json-sessions");
 const { validLogin } = require("../lib/demo-login");
 
-test("account credentials are checked against the server-only JSON hash", () => {
+test("demo sign-in accepts arbitrary non-empty credentials within length limits", () => {
   assert.equal(validLogin("demo", "demo1234"), true);
-  assert.equal(validLogin("demo", "wrong"), false);
-  assert.equal(validLogin("other", "demo1234"), false);
+  assert.equal(validLogin("demo", "wrong"), true);
+  assert.equal(validLogin("other", "random-password"), true);
+  assert.equal(validLogin("", "password"), false);
+  assert.equal(validLogin("   ", "password"), false);
+  assert.equal(validLogin("demo", "   "), false);
+  assert.equal(validLogin("a".repeat(81), "password"), false);
+  assert.equal(validLogin("demo", "a".repeat(257)), false);
+  assert.equal(validLogin("bad\nname", "password"), false);
   assert.equal(validLogin("demo", null), false);
 });
 
@@ -57,7 +63,7 @@ test("the callback URL can be supplied at request time without configuring a fix
   assert.deepEqual(sent, ["https://first.example/ping", "https://second.example/another?test=002"]);
 });
 
-test("the HTTPS transport sends only the fixed POST body and refuses redirects", async (t) => {
+test("the HTTPS transport includes the signed-in username, uses UTF-8 length and refuses redirects", async (t) => {
   let responseStatus = 204;
   let count = 0;
   t.mock.method(https, "request", (target, options, onResponse) => {
@@ -74,16 +80,16 @@ test("the HTTPS transport sends only the fixed POST body and refuses redirects",
     });
     const request = new EventEmitter();
     request.end = (body) => {
-      assert.equal(body, "This Poc by xlsize0bruh");
+      assert.equal(body, "This Poc by xlsize0bruh\nUsername: alice-\u00e9");
       assert.equal(options.headers["Content-Length"], Buffer.byteLength(body));
       queueMicrotask(() => onResponse({ statusCode: responseStatus, destroy() {} }));
     };
     return request;
   });
   const sender = createCallbackSender({ allowedHosts: [], resolveAddresses: async () => ["8.8.8.8"] });
-  assert.deepEqual(await sender("https://callback.example/unique?test=001"), { status: 204 });
+  assert.deepEqual(await sender("https://callback.example/unique?test=001", "alice-\u00e9"), { status: 204 });
   responseStatus = 302;
-  await assert.rejects(sender("https://callback.example/unique?test=001"), /successful response/);
+  await assert.rejects(sender("https://callback.example/unique?test=001", "alice-\u00e9"), /successful response/);
   assert.equal(count, 2);
 });
 
