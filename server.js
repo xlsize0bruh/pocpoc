@@ -1,5 +1,9 @@
 const http = require("node:http");
 const crypto = require("node:crypto");
+const path = require("node:path");
+const { validLogin } = require("./lib/demo-login");
+const { createCallbackSender, MESSAGE } = require("./lib/callback");
+const { JsonSessions } = require("./lib/json-sessions");
 
 const SESSION_COOKIE = "safari_poc_session";
 const SESSION_TTL_MS = 10 * 60 * 1000;
@@ -65,8 +69,8 @@ async function readForm(req) {
   return new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
 }
 
-function createPocServer({ now = Date.now, log = console.log } = {}) {
-  const sessions = new Map();
+function createPocServer({ now = Date.now, log = console.log, sendCallback = createCallbackSender(), sessionFile } = {}) {
+  const sessions = sessionFile ? new JsonSessions(sessionFile) : new Map();
   return http.createServer(async (req, res) => {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
     res.setHeader("Pragma", "no-cache");
@@ -130,7 +134,7 @@ function createPocServer({ now = Date.now, log = console.log } = {}) {
         }
         const candidate = form.get("next") || "/private";
         const next = candidate === "/private" || candidate.startsWith("/private?") ? candidate : "/private";
-        if (form.get("username") !== DEMO_USER || form.get("password") !== DEMO_PASSWORD) {
+        if (!validLogin(form.get("username"), form.get("password"))) {
           loginPage("Incorrect username or password.", next, 401);
           return;
         }
@@ -164,6 +168,20 @@ function createPocServer({ now = Date.now, log = console.log } = {}) {
         return;
       }
       if (url.pathname === "/") {
+        if (url.searchParams.has("url")) {
+          if (!session) {
+            loginPage("Sign in first. No callback was sent.", "/private", 401);
+            return;
+          }
+          try {
+            await sendCallback(url.searchParams.get("url"));
+            log(`[${new Date(now()).toISOString()}] CALLBACK SUCCESS demo`);
+            send(200, page("Ping sent", `<h1>Ping sent</h1><pre>${escapeHtml(MESSAGE)}</pre><a href="/private">Account</a>`));
+          } catch (error) {
+            send(error.status || 502, page("Ping failed", `<h1>Ping failed</h1><p role="alert">${escapeHtml(error.message)}</p><a href="/private">Account</a>`));
+          }
+          return;
+        }
         const next = `/private${url.search}`;
         if (session) redirect(next);
         else loginPage("", next);
@@ -193,6 +211,9 @@ function createPocServer({ now = Date.now, log = console.log } = {}) {
           <div><dt>Session expires</dt><dd>${escapeHtml(new Date(session.expiresAt).toISOString())}</dd></div>
           <div><dt>Session ID</dt><dd><code>${escapeHtml(token.slice(0, 12))}...</code></dd></div></dl>
           <h2>Current request</h2><pre>${escapeHtml(`${req.method} ${req.url}\nHost: ${req.headers.host || ""}\nAuth: AUTHENTICATED demo`)}</pre>
+          <h2>Callback</h2><form method="get" action="/">
+          <label for="callback">Callback URL</label><input id="callback" type="url" name="url" placeholder="https://your-endpoint.example/" required>
+          <button type="submit">Send ping</button></form>
           <div class="actions"><a href="${escapeHtml(`/private${url.search}`)}">Reload account</a>
           <a href="/api/private">Account JSON</a>
           <form method="post" action="/logout"><input type="hidden" name="csrf" value="${escapeHtml(session.csrf)}"><button type="submit">Sign out</button></form></div>
@@ -210,11 +231,11 @@ function createPocServer({ now = Date.now, log = console.log } = {}) {
 
 if (require.main === module) {
   const port = Number(process.env.PORT || 8080);
-  createPocServer().listen(port, "0.0.0.0", () => {
+  createPocServer({ sessionFile: path.join(__dirname, ".data", "sessions.json") }).listen(port, "0.0.0.0", () => {
     console.log(`Safari Session PoC running at http://localhost:${port}`);
     console.log(`iPhone URL: http://<your-computer-ip>:${port}/`);
     console.log(`Demo login: ${DEMO_USER} / ${DEMO_PASSWORD}`);
-    console.log("Sessions expire after 10 minutes; restarting the server clears all sessions.");
+    console.log("Sessions are saved in .data/sessions.json and expire after 10 minutes.");
     console.log("HTTP demo only. Use synthetic data; session cookies are intentionally logged.");
   });
 }

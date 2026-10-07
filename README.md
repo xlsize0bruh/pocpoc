@@ -4,6 +4,42 @@ Demo login for checking whether locked Safari restores a selected tab and sends 
 
 ## Netlify HTTPS login
 
+### Authenticated callback PoC
+
+The demo account is stored in server-only `data/demo-user.json` with a salted password hash.
+Credentials remain `demo` / `demo1234`. Only synthetic data belongs in this demo.
+
+Supply your own callback URL at request time using `/?url=...`; no fixed URL is required.
+Optionally restrict destinations with `CALLBACK_ALLOWED_HOSTS`, a comma-separated list
+of exact hostnames (Netlify environment-variable scope: Functions). No wildcard matching is used.
+Without this optional setting, any public HTTPS receiver can be supplied at request time.
+The receiver must support HTTPS on port 443, resolve to public IPv4 addresses and accept POST.
+Requests never follow redirects, and private/reserved addresses are rejected.
+Do not configure other people's endpoints.
+
+After signing in, open this URL from another app while Safari remains locked:
+
+```text
+https://safari-poc.netlify.app/?url=https%3A%2F%2Fyour-unique-oast-host.example%2F%3Ftest%3Dlocked-001
+```
+
+URL-encode the entire callback URL, including its query parameters. The server validates
+the session before making one HTTPS POST to the receiver. The body is exactly:
+
+```text
+This Poc by xlsize0bruh
+```
+
+No cookie, password, private marker or account data is forwarded. Logged-out, forged,
+expired and revoked sessions cannot send callbacks. Signing in does not automatically
+replay a blocked callback. Use a new test ID for each attempt and compare callback timing
+with a screen recording showing that Safari authentication did not succeed.
+
+This GET-triggered action is intentional for the PoC, not production web design.
+A callback demonstrates server-side execution, not that Safari's UI was unlocked.
+The earlier hosted storage failure must be resolved and deployment verified before
+using the Netlify URL; local tests do not establish that the deployed site works.
+
 Open https://safari-poc.netlify.app/?test=private-lock-001 and sign in with username `demo` and password `demo1234`. The resulting `/private` page requires a valid server-side session, as does `/api/private`.
 
 The function issues this cookie only after successful login:
@@ -34,7 +70,9 @@ The local `server.js` provides a real server-side demo login:
 - Password: `demo1234`
 - Cookie: `safari_poc_session` (random, HttpOnly, SameSite=Lax)
 - Session lifetime: 10 minutes from login; requests do not renew it.
-- Sessions are kept in memory. Restarting the server logs everyone out.
+- The command-line server saves sessions in `.data/sessions.json`; restarting preserves
+  unexpired sessions. This directory is ignored by Git and is never served over HTTP.
+- Credentials are checked against the hashed account record in `data/demo-user.json`.
 - `/private` and `/api/private` require a valid session and return only synthetic data.
 - Sign out invalidates the session, including copied cookies.
 
@@ -43,6 +81,10 @@ Start it with Node.js:
 ```bash
 node server.js
 ```
+
+The local server also supports `/?url=...` with the same destination restrictions.
+Tests use isolated in-memory sessions unless
+a JSON session filename is explicitly supplied.
 
 Open `http://<your-computer-wifi-ip>:8080/?test=locked-lan-001` on your iPhone, sign in, and leave the resulting `/private` tab selected. Keep the iPhone and computer on the same network. Disable the Wi-Fi proxy for this direct HTTP demonstration.
 

@@ -2,10 +2,10 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { createPocServer, SESSION_TTL_MS } = require("./server");
 
-async function fixture(t) {
+async function fixture(t, options = {}) {
   let time = Date.UTC(2026, 9, 7);
   const logs = [];
-  const server = createPocServer({ now: () => time, log: (line) => logs.push(line) });
+  const server = createPocServer({ now: () => time, log: (line) => logs.push(line), ...options });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise((resolve) => {
     server.close(resolve);
@@ -30,6 +30,25 @@ test("guests and forged sessions cannot read the private HTML or JSON", async (t
       assert.match(response.headers.get("cache-control"), /no-store/);
     }
   }
+});
+
+test("local callback is login-gated and logout revokes callback access", async (t) => {
+  const callbacks = [];
+  const { login, request } = await fixture(t, { sendCallback: async (url) => callbacks.push(url) });
+  const target = "https://callback.example/locked-001";
+  const route = `/?url=${encodeURIComponent(target)}`;
+  assert.equal((await request(route)).status, 401);
+  assert.equal((await request(route, { headers: { Cookie: "safari_poc_session=forged" } })).status, 401);
+  assert.deepEqual(callbacks, []);
+  const signedIn = await login();
+  const headers = { Cookie: signedIn.headers.get("set-cookie").split(";")[0] };
+  assert.equal((await request(route, { headers })).status, 200);
+  assert.deepEqual(callbacks, [target]);
+  const html = await (await request("/private", { headers })).text();
+  const csrf = html.match(/name="csrf" value="([a-f0-9]+)"/)[1];
+  await request("/logout", { method: "POST", headers, body: new URLSearchParams({ csrf }) });
+  assert.equal((await request(route, { headers })).status, 401);
+  assert.deepEqual(callbacks, [target]);
 });
 
 test("incorrect credentials do not create a session or log the password", async (t) => {

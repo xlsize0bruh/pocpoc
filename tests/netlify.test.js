@@ -7,12 +7,14 @@ function fixture() {
   let time = Date.UTC(2026, 9, 7);
   const records = new Map();
   const logs = [];
+  const callbacks = [];
   const store = {
     async get(key, options) { assert.equal(options.type, "json"); return records.get(key) || null; },
     async setJSON(key, value) { records.set(key, structuredClone(value)); },
     async delete(key) { records.delete(key); },
   };
-  const freshHandler = () => createHandler({ getStoreForEvent: () => store, now: () => time, log: (value) => logs.push(value) });
+  const freshHandler = () => createHandler({ getStoreForEvent: () => store, now: () => time, log: (value) => logs.push(value),
+    sendCallback: async (url) => { callbacks.push(url); return { status: 200 }; } });
   const call = (path, options = {}, handler = freshHandler()) => handler({
     httpMethod: options.method || "GET", rawUrl: `https://safari-poc.netlify.app${path}`,
     headers: { host: "safari-poc.netlify.app", ...options.headers },
@@ -22,8 +24,38 @@ function fixture() {
     method: "POST", headers: { origin: "https://safari-poc.netlify.app", ...options.headers },
     body: new URLSearchParams({ username: "demo", password: "demo1234", ...options.fields }).toString(),
   });
-  return { call, login, records, logs, freshHandler, advance: (amount) => { time += amount; } };
+  return { call, login, records, logs, callbacks, freshHandler, advance: (amount) => { time += amount; } };
 }
+
+test("Netlify callback executes only for a valid session, not guests or expired sessions", async () => {
+  const { login, call, callbacks, advance } = fixture();
+  const target = "https://callback.example/unique?test=locked-001&marker=fake";
+  const route = `/?url=${encodeURIComponent(target)}`;
+  assert.equal((await call(route)).statusCode, 401);
+  assert.equal((await call(route, { headers: { cookie: `${SESSION_COOKIE}=${"a".repeat(64)}` } })).statusCode, 401);
+  assert.deepEqual(callbacks, []);
+  const signedIn = await login();
+  const headers = { cookie: signedIn.headers["Set-Cookie"].split(";")[0] };
+  assert.deepEqual(callbacks, []);
+  const ping = await call(route, { headers });
+  assert.equal(ping.statusCode, 200);
+  assert.match(ping.body, /This Poc by xlsize0bruh/);
+  assert.deepEqual(callbacks, [target]);
+  advance(SESSION_TTL_MS);
+  assert.equal((await call(route, { headers })).statusCode, 401);
+  assert.deepEqual(callbacks, [target]);
+});
+
+test("Netlify callback reports destination failure instead of success", async () => {
+  const { login, call } = fixture();
+  const signedIn = await login();
+  const headers = { cookie: signedIn.headers["Set-Cookie"].split(";")[0] };
+  const handler = createHandler({ getStoreForEvent: () => ({ get: async () => ({ expiresAt: Date.now() + 60000 }) }),
+    sendCallback: async () => { throw Object.assign(new Error("Callback unavailable"), { status: 502 }); }, log: () => {} });
+  const result = await call("/?url=https%3A%2F%2Fcallback.example", { headers }, handler);
+  assert.equal(result.statusCode, 502);
+  assert.match(result.body, /Ping failed/);
+});
 
 test("Netlify guests and forged cookies cannot read private data", async () => {
   const { call } = fixture();
