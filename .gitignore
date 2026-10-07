@@ -1,5 +1,7 @@
 node_modules/
 requests.log
 server-errors.log
+callback-server.log
+callback-server-errors.log
 .netlify/
 .data/

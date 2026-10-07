@@ -3,6 +3,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const https = require("node:https");
+const { EventEmitter } = require("node:events");
 const { createCallbackSender, MESSAGE } = require("../lib/callback");
 const { JsonSessions } = require("../lib/json-sessions");
 const { validLogin } = require("../lib/demo-login");
@@ -53,6 +55,36 @@ test("the callback URL can be supplied at request time without configuring a fix
   await sender("https://first.example/ping");
   await sender("https://second.example/another?test=002");
   assert.deepEqual(sent, ["https://first.example/ping", "https://second.example/another?test=002"]);
+});
+
+test("the HTTPS transport sends only the fixed POST body and refuses redirects", async (t) => {
+  let responseStatus = 204;
+  let count = 0;
+  t.mock.method(https, "request", (target, options, onResponse) => {
+    count++;
+    assert.equal(target.href, "https://callback.example/unique?test=001");
+    assert.equal(options.method, "POST");
+    assert.equal(options.agent, false);
+    assert.equal(options.headers.Cookie, undefined);
+    assert.equal(options.headers.Authorization, undefined);
+    options.lookup("callback.example", {}, (error, address, family) => {
+      assert.equal(error, null);
+      assert.equal(address, "8.8.8.8");
+      assert.equal(family, 4);
+    });
+    const request = new EventEmitter();
+    request.end = (body) => {
+      assert.equal(body, "This Poc by xlsize0bruh");
+      assert.equal(options.headers["Content-Length"], Buffer.byteLength(body));
+      queueMicrotask(() => onResponse({ statusCode: responseStatus, destroy() {} }));
+    };
+    return request;
+  });
+  const sender = createCallbackSender({ allowedHosts: [], resolveAddresses: async () => ["8.8.8.8"] });
+  assert.deepEqual(await sender("https://callback.example/unique?test=001"), { status: 204 });
+  responseStatus = 302;
+  await assert.rejects(sender("https://callback.example/unique?test=001"), /successful response/);
+  assert.equal(count, 2);
 });
 
 test("JSON session records survive restarting the local store and deletion persists", (t) => {

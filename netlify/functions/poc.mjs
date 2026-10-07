@@ -1,7 +1,12 @@
 import app from "../../lib/netlify-app.js";
+import { getStore } from "@netlify/blobs";
+
+const handleEvent = app.createHandler({
+  getStoreForEvent: () => getStore({ name: app.STORE_NAME, consistency: "strong" }),
+});
 
 export default async function handler(request) {
-  const result = await app.handler({
+  const result = await handleEvent({
     httpMethod: request.method,
     rawUrl: request.url,
     headers: Object.fromEntries(request.headers),
