@@ -1,12 +1,13 @@
 [build]
-  publish = "."
+  command = "npm run build"
+  publish = "public"
   functions = "netlify/functions"
 
-[[redirects]]
-  from = "/clear"
-  to = "/.netlify/functions/poc"
-  status = 200
-  force = true
+[build.environment]
+  NODE_VERSION = "22"
+
+[functions]
+  node_bundler = "esbuild"
 
 [[redirects]]
   from = "/*"

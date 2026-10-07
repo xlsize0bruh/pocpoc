@@ -219,4 +219,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createPocServer, SESSION_COOKIE, SESSION_TTL_MS };
+module.exports = { createPocServer, SESSION_COOKIE, SESSION_TTL_MS, DEMO_USER, DEMO_PASSWORD, page, escapeHtml, cookieValue };

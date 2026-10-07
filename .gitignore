@@ -1,0 +1,4 @@
+node_modules/
+requests.log
+server-errors.log
+.netlify/

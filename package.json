@@ -1,0 +1,16 @@
+{
+  "name": "safari-session-poc",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "build": "node --check netlify/functions/poc.mjs && node --check lib/netlify-app.js",
+    "test": "node --test server.test.js tests/*.test.js"
+  },
+  "dependencies": {
+    "@netlify/blobs": "11.1.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
