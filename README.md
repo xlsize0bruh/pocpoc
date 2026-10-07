@@ -36,18 +36,46 @@ Normal URL after Netlify rewrites deploy:
 https://safari-poc.netlify.app/?para=poc
 ```
 
-## Optional local Node server
+## Local HTTP login demo
 
-If you want local server-side cookie logging too:
+The local `server.js` provides a real server-side demo login:
+
+- Username: `demo`
+- Password: `demo1234`
+- Cookie: `safari_poc_session` (random, HttpOnly, SameSite=Lax)
+- Session lifetime: 10 minutes from login; requests do not renew it.
+- Sessions are kept in memory. Restarting the server logs everyone out.
+- `/private` and `/api/private` require a valid session and return only synthetic data.
+- Sign out invalidates the session, including copied cookies.
+
+Start it with Node.js:
 
 ```bash
 node server.js
 ```
 
-Then open:
+Open `http://<your-computer-wifi-ip>:8080/?test=locked-lan-001` on your iPhone, sign in, and leave the resulting `/private` tab selected. Keep the iPhone and computer on the same network. Disable the Wi-Fi proxy for this direct HTTP demonstration.
 
-```text
-http://<your-computer-ip>:8080/?para=poc
+### Locked Safari reproduction
+
+1. Sign in while Safari is unlocked; confirm the private page appears.
+2. Return to Home and let the app or Private Browsing lock engage. Test each lock separately.
+3. Start a fresh packet capture on the computer's Wi-Fi interface, filtered with `tcp.port == 8080`.
+4. Wait 30 seconds without opening Safari to establish a quiet baseline.
+5. Tap Safari without passing Face ID, then check for fresh `GET /private` traffic.
+6. The server prints `Auth: AUTHENTICATED demo` only if that request contains a valid session cookie. Verify the timestamp against the still-visible lock prompt.
+7. A fresh HTTP 200 response containing `FAKE-PRIVATE-...` establishes that synthetic private content was returned. It does not establish UI display or JavaScript execution.
+
+The local demo deliberately omits the cookie's Secure attribute to permit HTTP transmission. Use fake data and these public demo credentials only; this is not production authentication. Login passwords are not printed, but demo session cookies and URLs are deliberately logged. Log retention and session expiry are different: logs are not automatically deleted after 10 minutes.
+
+To check the demo cookie's authority from a separate client while it is valid, send that demo cookie to `/api/private`. Requests without it return HTTP 401. This demonstrates the behavior of this custom app, not account compromise on another website.
+
+Capturing on the computer hosting the server demonstrates readable traffic at that endpoint. Observing it as a third party requires an appropriate network position; sharing Wi-Fi alone is insufficient. HTTPS traffic remains encrypted even on a local network.
+
+The Netlify HTTPS function is a separate cookie-only PoC; this login is implemented in the local Node server.
+
+### Verification
+
+```bash
+node --test server.test.js
 ```
-
-The local server prints each request URL and Cookie header.
