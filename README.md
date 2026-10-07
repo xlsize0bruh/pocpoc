@@ -37,8 +37,9 @@ with a screen recording showing that Safari authentication did not succeed.
 
 This GET-triggered action is intentional for the PoC, not production web design.
 A callback demonstrates server-side execution, not that Safari's UI was unlocked.
-The earlier hosted storage failure must be resolved and deployment verified before
-using the Netlify URL; local tests do not establish that the deployed site works.
+The hosted guest rejection, login, callback validation and logout flows have been
+verified. Actual delivery to your chosen endpoint should be checked with your own
+test receiver; no third-party callback was sent during implementation verification.
 
 Open https://safari-poc.netlify.app/?test=private-lock-001 and sign in with username `demo` and password `demo1234`. The resulting `/private` page requires a valid server-side session, as does `/api/private`.
 
@@ -112,4 +113,5 @@ The Netlify HTTPS login uses a separate Secure cookie and persistent session sto
 npm install
 npm test
 ```
+
 
